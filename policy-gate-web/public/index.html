@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>📋 Policy Gate — Code Policy Reviewer</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh;
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+    header { text-align: center; margin-bottom: 2.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+    header h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+    header p { color: var(--text-muted); font-size: 1rem; }
+
+    .tabs { display: flex; margin-bottom: 1.5rem; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .tab {
+      flex: 1; padding: 0.85rem 1rem; text-align: center; background: var(--surface);
+      border: none; color: var(--text-muted); font-size: 0.95rem; cursor: pointer;
+      transition: all 0.2s; font-weight: 500;
+    }
+    .tab:not(:last-child) { border-right: 1px solid var(--border); }
+    .tab.active { background: var(--accent); color: #fff; }
+    .tab:hover:not(.active) { background: #1c2128; color: var(--text); }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .form-group { margin-bottom: 1.25rem; }
+    label { display: block; margin-bottom: 0.4rem; font-weight: 500; font-size: 0.9rem; color: var(--text-muted); }
+    input[type="text"], input[type="url"] {
+      width: 100%; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); font-size: 1rem; outline: none;
+    }
+    input:focus { border-color: var(--accent); }
+    input::placeholder { color: #484f58; }
+
+    .file-drop {
+      border: 2px dashed var(--border); border-radius: var(--radius); padding: 2.5rem 1rem;
+      text-align: center; cursor: pointer; transition: all 0.2s; background: var(--bg);
+    }
+    .file-drop:hover, .file-drop.dragover { border-color: var(--accent); background: rgba(88,166,255,0.05); }
+    .file-drop p { color: var(--text-muted); margin-bottom: 0.3rem; }
+    .file-drop .icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+    .file-drop .filename { color: var(--green); font-weight: 600; margin-top: 0.5rem; }
+    .file-drop input[type="file"] { display: none; }
+
+    .btn {
+      width: 100%; padding: 0.85rem; background: var(--accent); border: none;
+      border-radius: var(--radius); color: #fff; font-size: 1rem; font-weight: 600;
+      cursor: pointer; transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .status {
+      margin-top: 1.5rem; padding: 1rem; border-radius: var(--radius);
+      background: var(--surface); border: 1px solid var(--border); display: none;
+    }
+    .status.visible { display: block; }
+    .status .spinner {
+      display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border);
+      border-top: 2px solid var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;
+      vertical-align: middle; margin-right: 0.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .report-container { margin-top: 2rem; display: none; }
+    .report-container.visible { display: block; }
+    .report-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .report-header h2 { font-size: 1.2rem; }
+    .btn-copy {
+      padding: 0.4rem 0.8rem; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text-muted); font-size: 0.85rem; cursor: pointer;
+    }
+    .btn-copy:hover { color: var(--text); border-color: var(--accent); }
+
+    .report {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.5rem; font-size: 0.9rem; line-height: 1.6; overflow-x: auto;
+    }
+    .report h1 { font-size: 1.4rem; margin-bottom: 0.5rem; border: none; }
+    .report h2 { font-size: 1.15rem; margin: 1.2rem 0 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
+    .report h3 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+    .report table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.85rem; }
+    .report th, .report td { padding: 0.4rem 0.6rem; text-align: left; border: 1px solid var(--border); }
+    .report th { background: var(--bg); font-weight: 600; }
+    .report blockquote { border-left: 3px solid var(--accent); padding: 0.5rem 1rem; margin: 0.5rem 0; color: var(--text-muted); background: rgba(88,166,255,0.05); border-radius: 0 var(--radius) var(--radius) 0; }
+    .report code { background: var(--bg); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.85em; }
+    .report hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+    .report em { color: var(--text-muted); }
+    .report p { margin: 0.3rem 0; }
+
+    .error { color: var(--red); }
+
+    .policies-info {
+      margin-top: 2rem; padding: 1.25rem; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius);
+    }
+    .policies-info summary { cursor: pointer; font-weight: 600; color: var(--text-muted); font-size: 0.9rem; }
+    .policies-info .policy-list { margin-top: 0.75rem; display: grid; gap: 0.5rem; }
+    .policy-item { display: flex; gap: 0.6rem; font-size: 0.85rem; color: var(--text-muted); }
+    .policy-item .num {
+      background: var(--bg); color: var(--accent); width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📋 Policy Gate</h1>
+      <p>AI-powered code policy reviewer for Python &amp; PySpark — powered by GitHub Copilot SDK</p>
+    </header>
+
+    <div class="tabs">
+      <button class="tab active" data-panel="repo-panel">🔗 GitHub Repository</button>
+      <button class="tab" data-panel="upload-panel">📦 Upload ZIP Archive</button>
+    </div>
+
+    <div id="repo-panel" class="panel active">
+      <div class="form-group">
+        <label for="repo-url">Repository URL</label>
+        <input type="url" id="repo-url" placeholder="https://github.com/org/repo" />
+      </div>
+      <div class="form-group">
+        <label for="repo-branch">Branch (optional)</label>
+        <input type="text" id="repo-branch" placeholder="main" />
+      </div>
+      <button class="btn" id="btn-review-repo">🔍 Run Policy Review</button>
+    </div>
+
+    <div id="upload-panel" class="panel">
+      <div class="form-group">
+        <label for="project-name">Project Name</label>
+        <input type="text" id="project-name" placeholder="my-data-pipeline" />
+      </div>
+      <div class="form-group">
+        <div class="file-drop" id="file-drop">
+          <div class="icon">📁</div>
+          <p>Drop a .zip file here or click to browse</p>
+          <p style="font-size:0.8rem">Max 50 MB</p>
+          <div class="filename" id="file-name"></div>
+          <input type="file" id="file-input" accept=".zip" />
+        </div>
+      </div>
+      <button class="btn" id="btn-review-upload">🔍 Run Policy Review</button>
+    </div>
+
+    <div class="status" id="status">
+      <span class="spinner"></span>
+      <span id="status-text">Analyzing code with Copilot agent…</span>
+    </div>
+
+    <div class="report-container" id="report-container">
+      <div class="report-header">
+        <h2>📋 Review Report</h2>
+        <button class="btn-copy" id="btn-copy">📋 Copy Markdown</button>
+      </div>
+      <div class="report" id="report"></div>
+    </div>
+
+    <details class="policies-info">
+      <summary>📖 Policies Checked (7)</summary>
+      <div class="policy-list">
+        <div class="policy-item"><span class="num">1</span> No global SparkSession via getOrCreate()</div>
+        <div class="policy-item"><span class="num">2</span> No hardcoded file paths, passwords, emails, secrets</div>
+        <div class="policy-item"><span class="num">3</span> Adequate code commenting (~1:20 ratio)</div>
+        <div class="policy-item"><span class="num">4</span> Delta tables only (no parquet/csv/json/orc)</div>
+        <div class="policy-item"><span class="num">5</span> No schema/database creation</div>
+        <div class="policy-item"><span class="num">6</span> Meaningful Python file names</div>
+        <div class="policy-item"><span class="num">7</span> No downloading files to local VMs</div>
+      </div>
+    </details>
+  </div>
+
+  <script>
+    // Tab switching
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(tab.dataset.panel).classList.add("active");
+      });
+    });
+
+    // File drop zone
+    const fileDrop = document.getElementById("file-drop");
+    const fileInput = document.getElementById("file-input");
+    const fileName = document.getElementById("file-name");
+    let selectedFile = null;
+
+    fileDrop.addEventListener("click", () => fileInput.click());
+    fileDrop.addEventListener("dragover", e => { e.preventDefault(); fileDrop.classList.add("dragover"); });
+    fileDrop.addEventListener("dragleave", () => fileDrop.classList.remove("dragover"));
+    fileDrop.addEventListener("drop", e => {
+      e.preventDefault(); fileDrop.classList.remove("dragover");
+      if (e.dataTransfer.files.length) { selectedFile = e.dataTransfer.files[0]; fileName.textContent = "✅ " + selectedFile.name; }
+    });
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files.length) { selectedFile = fileInput.files[0]; fileName.textContent = "✅ " + selectedFile.name; }
+    });
+
+    const statusEl = document.getElementById("status");
+    const statusText = document.getElementById("status-text");
+    const reportContainer = document.getElementById("report-container");
+    const reportEl = document.getElementById("report");
+    let rawMarkdown = "";
+
+    function showStatus(msg) { statusText.textContent = msg; statusEl.classList.add("visible"); reportContainer.classList.remove("visible"); }
+    function hideStatus() { statusEl.classList.remove("visible"); }
+    function showError(msg) { hideStatus(); reportEl.innerHTML = '<p class="error">❌ ' + msg + "</p>"; reportContainer.classList.add("visible"); }
+
+    function showReport(markdown) {
+      rawMarkdown = markdown;
+      reportEl.innerHTML = renderMarkdown(markdown);
+      reportContainer.classList.add("visible");
+    }
+
+    function renderMarkdown(md) {
+      let h = md
+        .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+        .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+        .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+        .replace(/^---$/gm, "<hr>")
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*(.+?)\*/g, "<em>$1</em>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
+
+      // Tables
+      h = h.replace(/((?:\|.+\|\s*\n)+)/g, (match) => {
+        const rows = match.trim().split("\n").filter(r => r.trim());
+        if (rows.length < 2) return match;
+        let t = "<table>";
+        rows.forEach((row, i) => {
+          if (/^\|[\s\-:|]+\|$/.test(row.trim())) return;
+          const cells = row.split("|").filter((c, idx, arr) => idx > 0 && idx < arr.length - 1);
+          const tag = i === 0 ? "th" : "td";
+          t += "<tr>" + cells.map(c => "<" + tag + ">" + c.trim() + "</" + tag + ">").join("") + "</tr>";
+        });
+        return t + "</table>";
+      });
+
+      // Paragraphs from double newlines
+      h = h.replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>");
+      return "<p>" + h + "</p>";
+    }
+
+    document.getElementById("btn-copy").addEventListener("click", () => {
+      navigator.clipboard.writeText(rawMarkdown).then(() => {
+        document.getElementById("btn-copy").textContent = "✅ Copied!";
+        setTimeout(() => document.getElementById("btn-copy").textContent = "📋 Copy Markdown", 2000);
+      });
+    });
+
+    document.getElementById("btn-review-repo").addEventListener("click", async () => {
+      const repoUrl = document.getElementById("repo-url").value.trim();
+      const branch = document.getElementById("repo-branch").value.trim();
+      if (!repoUrl) return alert("Please enter a repository URL");
+      const btn = document.getElementById("btn-review-repo");
+      btn.disabled = true;
+      showStatus("Cloning and analyzing " + repoUrl + " with Copilot agent…");
+      try {
+        const resp = await fetch("/api/review/repo", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repoUrl, branch: branch || undefined }),
+        });
+        const data = await resp.json();
+        hideStatus();
+        if (data.error) return showError(data.error);
+        showReport(data.report);
+      } catch (err) { showError(err.message); } finally { btn.disabled = false; }
+    });
+
+    document.getElementById("btn-review-upload").addEventListener("click", async () => {
+      if (!selectedFile) return alert("Please select a ZIP file");
+      const btn = document.getElementById("btn-review-upload");
+      btn.disabled = true;
+      const projectName = document.getElementById("project-name").value.trim() || selectedFile.name;
+      showStatus("Extracting and analyzing " + selectedFile.name + " with Copilot agent…");
+      try {
+        const form = new FormData();
+        form.append("archive", selectedFile);
+        form.append("projectName", projectName);
+        const resp = await fetch("/api/review/upload", { method: "POST", body: form });
+        const data = await resp.json();
+        hideStatus();
+        if (data.error) return showError(data.error);
+        showReport(data.report);
+      } catch (err) { showError(err.message); } finally { btn.disabled = false; }
+    });
+  </script>
+</body>
+</html>
