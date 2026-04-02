@@ -12,7 +12,7 @@ defined in the org-level `.github` repository.
 
 ## Prerequisites
 
-- **Node.js** ≥ 18
+- **Node.js** ≥ 22.5 (required by `@github/copilot-sdk` for `node:sqlite`)
 - **GitHub Copilot CLI** installed and authenticated (`gh copilot` / `copilot-cli`)
 - **Git** (for cloning repositories)
 
