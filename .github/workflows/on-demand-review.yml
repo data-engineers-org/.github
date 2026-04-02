@@ -1,0 +1,241 @@
+# -----------------------------------------------------------------------
+# Policy Gate — On-Demand Repository Review (Agentic Workflow)
+# -----------------------------------------------------------------------
+#
+# Run this workflow manually from the Actions tab. Provide a GitHub
+# repository URL and it will:
+#   1. Clone the target repository
+#   2. Run the deterministic policy checker against all Python files
+#   3. Post the full policy report as the workflow summary
+#
+# ⚠️  READ-ONLY: This workflow never modifies the target repository.
+#    It only produces a compliance report.
+#
+# Usage:
+#   1. Go to Actions → "📋 On-Demand Policy Review"
+#   2. Click "Run workflow"
+#   3. Paste the repository URL (e.g. https://github.com/org/repo)
+#   4. Optionally specify a branch (defaults to the repo's default branch)
+#   5. View the report in the workflow run summary
+# -----------------------------------------------------------------------
+
+name: "📋 On-Demand Policy Review"
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository_url:
+        description: "GitHub repository URL to review (e.g. https://github.com/data-engineers-org/sales-analytics)"
+        required: true
+        type: string
+      branch:
+        description: "Branch to review (leave empty for default branch)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  policy-review:
+    name: "📋 Review: ${{ github.event.inputs.repository_url }}"
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---- 1. Parse the repository URL -----------------------------------
+      - name: "Parse repository info"
+        id: parse
+        run: |
+          REPO_URL="${{ github.event.inputs.repository_url }}"
+          BRANCH="${{ github.event.inputs.branch }}"
+
+          # Strip trailing slashes and .git suffix
+          REPO_URL="${REPO_URL%/}"
+          REPO_URL="${REPO_URL%.git}"
+
+          # Extract owner/repo from URL
+          # Handles: https://github.com/owner/repo
+          REPO_FULL=$(echo "$REPO_URL" | sed -E 's|https?://github\.com/||')
+
+          if [[ -z "$REPO_FULL" || ! "$REPO_FULL" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "::error::Invalid repository URL: $REPO_URL"
+            echo "Expected format: https://github.com/owner/repo"
+            exit 1
+          fi
+
+          echo "repo_full=$REPO_FULL" >> "$GITHUB_OUTPUT"
+          echo "repo_url=$REPO_URL" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          echo "📦 Repository: $REPO_FULL"
+          echo "🌿 Branch: ${BRANCH:-default}"
+
+      # ---- 2. Check out this (.github) repo for the checker script -------
+      - name: "Checkout policy checker"
+        uses: actions/checkout@v4
+        with:
+          path: .policy-gate
+
+      # ---- 3. Clone the target repository --------------------------------
+      - name: "Clone target repository"
+        run: |
+          REPO_URL="${{ steps.parse.outputs.repo_url }}"
+          BRANCH="${{ steps.parse.outputs.branch }}"
+
+          echo "🔍 Cloning $REPO_URL ..."
+
+          CLONE_ARGS=(--depth 1)
+          if [[ -n "$BRANCH" ]]; then
+            CLONE_ARGS+=(--branch "$BRANCH")
+          fi
+
+          git clone "${CLONE_ARGS[@]}" "${REPO_URL}.git" target-repo 2>&1 || {
+            echo "::error::Failed to clone repository. Check the URL and ensure it is accessible."
+            exit 1
+          }
+
+          # Detect actual branch name
+          cd target-repo
+          ACTUAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          echo "branch_actual=$ACTUAL_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "✅ Cloned successfully (branch: $ACTUAL_BRANCH)"
+        id: clone
+
+      # ---- 4. Set up Python ----------------------------------------------
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ---- 5. Run the policy checker (READ-ONLY) -------------------------
+      - name: "Run policy review"
+        id: check
+        run: |
+          REPO_FULL="${{ steps.parse.outputs.repo_full }}"
+          BRANCH="${{ steps.clone.outputs.branch_actual }}"
+
+          echo "🔍 Scanning Python files in $REPO_FULL ($BRANCH)..."
+          echo ""
+
+          # Count Python files
+          PY_COUNT=$(find target-repo -name "*.py" \
+            -not -path "*/.git/*" \
+            -not -path "*/__pycache__/*" \
+            -not -path "*/venv/*" \
+            -not -path "*/.venv/*" | wc -l | tr -d ' ')
+
+          echo "📁 Found $PY_COUNT Python file(s)"
+
+          if [ "$PY_COUNT" -eq 0 ]; then
+            echo "⚠️ No Python files found — generating empty report"
+          fi
+
+          # Generate markdown report
+          python3 .policy-gate/scripts/policy_checker.py target-repo \
+            --repo "$REPO_FULL" \
+            --branch "$BRANCH" \
+            --format markdown \
+            --output policy-report.md
+
+          # Generate JSON for status evaluation
+          python3 .policy-gate/scripts/policy_checker.py target-repo \
+            --repo "$REPO_FULL" \
+            --branch "$BRANCH" \
+            --format json \
+            --output policy-report.json
+
+          # Extract overall status
+          STATUS=$(python3 -c "
+          import json
+          with open('policy-report.json') as f:
+              data = json.load(f)
+          print(data['overall_status'])
+          ")
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+          ERRORS=$(python3 -c "
+          import json
+          with open('policy-report.json') as f:
+              data = json.load(f)
+          print(data['total_errors'])
+          ")
+          echo "errors=$ERRORS" >> "$GITHUB_OUTPUT"
+
+          WARNINGS=$(python3 -c "
+          import json
+          with open('policy-report.json') as f:
+              data = json.load(f)
+          print(data['total_warnings'])
+          ")
+          echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "📋 Policy check complete: status=$STATUS, errors=$ERRORS, warnings=$WARNINGS"
+
+      # ---- 6. Post report to workflow summary ----------------------------
+      - name: "Post report to summary"
+        if: always()
+        run: |
+          REPO_FULL="${{ steps.parse.outputs.repo_full }}"
+          STATUS="${{ steps.check.outputs.status }}"
+          ERRORS="${{ steps.check.outputs.errors }}"
+          WARNINGS="${{ steps.check.outputs.warnings }}"
+
+          # Write the full report to the GitHub Actions Job Summary
+          cat policy-report.md >> "$GITHUB_STEP_SUMMARY"
+
+          # Add a footer with run metadata
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### 🔗 Run Details" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Target Repo** | [\`$REPO_FULL\`](https://github.com/$REPO_FULL) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Triggered By** | @${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Workflow Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      # ---- 7. Upload report as artifact ----------------------------------
+      - name: "Upload report artifact"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "policy-report-${{ github.run_number }}"
+          path: |
+            policy-report.md
+            policy-report.json
+          retention-days: 90
+
+      # ---- 8. Set final status -------------------------------------------
+      - name: "Evaluate result"
+        if: always()
+        run: |
+          STATUS="${{ steps.check.outputs.status }}"
+          ERRORS="${{ steps.check.outputs.errors }}"
+          WARNINGS="${{ steps.check.outputs.warnings }}"
+          REPO="${{ steps.parse.outputs.repo_full }}"
+
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "  📋 POLICY GATE RESULT"
+          echo "  Repository: $REPO"
+          echo "════════════════════════════════════════════"
+
+          if [ "$STATUS" = "fail" ]; then
+            echo "  ❌ FAIL — $ERRORS error(s), $WARNINGS warning(s)"
+            echo "════════════════════════════════════════════"
+            echo ""
+            echo "::error::Policy review FAILED for $REPO with $ERRORS error(s). See the run summary for the full report."
+            exit 1
+          elif [ "$STATUS" = "warning" ]; then
+            echo "  ⚠️  WARNINGS — $WARNINGS warning(s)"
+            echo "════════════════════════════════════════════"
+            echo ""
+            echo "::warning::Policy review found $WARNINGS warning(s) in $REPO. See the run summary for details."
+          else
+            echo "  ✅ PASS — All policies satisfied"
+            echo "════════════════════════════════════════════"
+          fi
