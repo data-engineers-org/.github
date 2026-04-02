@@ -247,9 +247,15 @@
       const m = modelsData[sel.value];
       if (!m) return;
       badge.className = "model-cost tier-" + m.tier;
-      const mult = m.multiplier === 0 ? "Free — included in plan" : m.multiplier + "× premium request" + (m.multiplier !== 1 ? "s" : "") + " per use";
-      const price = m.multiplier === 0 ? "" : " (~$" + (m.multiplier * 0.04).toFixed(2) + " overage)";
-      badge.innerHTML = '<span>' + mult + '</span><span class="badge">' + m.cost + price + '</span>';
+      let left, right;
+      if (m.multiplier === 0) {
+        left = "✅ " + m.note;
+        right = "Free";
+      } else {
+        left = m.cost + " per request · " + m.note;
+        right = "$" + (m.multiplier * 0.04).toFixed(2) + " overage each";
+      }
+      badge.innerHTML = '<span>' + left + '</span><span class="badge">' + right + '</span>';
     }
 
     async function loadModels() {

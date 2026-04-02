@@ -18,17 +18,24 @@ const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 50 * 1024 * 1024 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
-// Available models with premium request multipliers
+// Available models with premium request multipliers (source: docs.github.com/copilot)
+// Multiplier = how many premium requests consumed per interaction on paid plans
+// On Free plan, all models consume 1× regardless
 const MODELS = {
-  "gpt-4.1":           { name: "GPT-4.1",              multiplier: 0,     cost: "Included (0×)", tier: "base" },
-  "gpt-4o":            { name: "GPT-4o",                multiplier: 0,     cost: "Included (0×)", tier: "base" },
-  "o4-mini":           { name: "o4-mini",               multiplier: 0.33,  cost: "0.33× premium",  tier: "low" },
-  "gemini-2.0-flash":  { name: "Gemini 2.0 Flash",      multiplier: 0.25,  cost: "0.25× premium",  tier: "low" },
-  "claude-sonnet-4":   { name: "Claude Sonnet 4",       multiplier: 1,     cost: "1× premium",     tier: "standard" },
-  "claude-sonnet-4.5": { name: "Claude Sonnet 4.5",     multiplier: 1,     cost: "1× premium",     tier: "standard" },
-  "gemini-2.5-pro":    { name: "Gemini 2.5 Pro",        multiplier: 1,     cost: "1× premium",     tier: "standard" },
-  "claude-opus-4":     { name: "Claude Opus 4",         multiplier: 10,    cost: "10× premium",    tier: "premium" },
-  "gpt-4.5":           { name: "GPT-4.5",               multiplier: 50,    cost: "50× premium",    tier: "expensive" },
+  "gpt-4.1":             { name: "GPT-4.1",                   multiplier: 0,    cost: "Included",       tier: "base",      note: "Unlimited on paid plans" },
+  "gpt-4o":              { name: "GPT-4o",                    multiplier: 0,    cost: "Included",       tier: "base",      note: "Unlimited on paid plans" },
+  "gpt-5-mini":          { name: "GPT-5 mini",                multiplier: 0,    cost: "Included",       tier: "base",      note: "Unlimited on paid plans" },
+  "gemini-2.0-flash":    { name: "Gemini 2.0 Flash",          multiplier: 0.25, cost: "0.25× premium",  tier: "low",       note: "Budget-friendly" },
+  "o3-mini":             { name: "o3-mini",                   multiplier: 0.33, cost: "0.33× premium",  tier: "low",       note: "Efficient reasoning" },
+  "o4-mini":             { name: "o4-mini",                   multiplier: 0.33, cost: "0.33× premium",  tier: "low",       note: "Efficient reasoning" },
+  "claude-sonnet-4":     { name: "Claude Sonnet 4",           multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Balanced coding & reasoning" },
+  "claude-sonnet-4.5":   { name: "Claude Sonnet 4.5",        multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Balanced coding & reasoning" },
+  "claude-sonnet-4.6":   { name: "Claude Sonnet 4.6",        multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Subject to change" },
+  "gemini-2.5-pro":      { name: "Gemini 2.5 Pro",           multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Long context, coding" },
+  "claude-opus-4.5":     { name: "Claude Opus 4.5",          multiplier: 3,    cost: "3× premium",     tier: "premium",   note: "Advanced reasoning" },
+  "claude-opus-4":       { name: "Claude Opus 4",            multiplier: 10,   cost: "10× premium",    tier: "premium",   note: "Deep reasoning, agentic" },
+  "claude-opus-4.6":     { name: "Claude Opus 4.6",          multiplier: 20,   cost: "20× premium",    tier: "expensive", note: "Ultra-premium, 1M context" },
+  "gpt-4.5":             { name: "GPT-4.5",                  multiplier: 50,   cost: "50× premium",    tier: "expensive", note: "Pro+/Enterprise only" },
 };
 
 // The agent prompt from our policy-reviewer.agent.md, adapted for SDK use
