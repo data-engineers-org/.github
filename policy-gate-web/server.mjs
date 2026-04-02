@@ -18,25 +18,96 @@ const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 50 * 1024 * 1024 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
-// Available models with premium request multipliers (source: docs.github.com/copilot)
-// Multiplier = how many premium requests consumed per interaction on paid plans
-// On Free plan, all models consume 1× regardless
-const MODELS = {
-  "gpt-4.1":             { name: "GPT-4.1",                   multiplier: 0,    cost: "Included",       tier: "base",      note: "Unlimited on paid plans" },
-  "gpt-4o":              { name: "GPT-4o",                    multiplier: 0,    cost: "Included",       tier: "base",      note: "Unlimited on paid plans" },
-  "gpt-5-mini":          { name: "GPT-5 mini",                multiplier: 0,    cost: "Included",       tier: "base",      note: "Unlimited on paid plans" },
-  "gemini-2.0-flash":    { name: "Gemini 2.0 Flash",          multiplier: 0.25, cost: "0.25× premium",  tier: "low",       note: "Budget-friendly" },
-  "o3-mini":             { name: "o3-mini",                   multiplier: 0.33, cost: "0.33× premium",  tier: "low",       note: "Efficient reasoning" },
-  "o4-mini":             { name: "o4-mini",                   multiplier: 0.33, cost: "0.33× premium",  tier: "low",       note: "Efficient reasoning" },
-  "claude-sonnet-4":     { name: "Claude Sonnet 4",           multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Balanced coding & reasoning" },
-  "claude-sonnet-4.5":   { name: "Claude Sonnet 4.5",        multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Balanced coding & reasoning" },
-  "claude-sonnet-4.6":   { name: "Claude Sonnet 4.6",        multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Subject to change" },
-  "gemini-2.5-pro":      { name: "Gemini 2.5 Pro",           multiplier: 1,    cost: "1× premium",     tier: "standard",  note: "Long context, coding" },
-  "claude-opus-4.5":     { name: "Claude Opus 4.5",          multiplier: 3,    cost: "3× premium",     tier: "premium",   note: "Advanced reasoning" },
-  "claude-opus-4":       { name: "Claude Opus 4",            multiplier: 10,   cost: "10× premium",    tier: "premium",   note: "Deep reasoning, agentic" },
-  "claude-opus-4.6":     { name: "Claude Opus 4.6",          multiplier: 20,   cost: "20× premium",    tier: "expensive", note: "Ultra-premium, 1M context" },
-  "gpt-4.5":             { name: "GPT-4.5",                  multiplier: 50,   cost: "50× premium",    tier: "expensive", note: "Pro+/Enterprise only" },
-};
+// Premium request multipliers — fetched dynamically from GitHub's official docs
+// Source: github.com/github/docs/blob/main/data/tables/copilot/model-multipliers.yml
+const MULTIPLIERS_URL = "https://raw.githubusercontent.com/github/docs/main/data/tables/copilot/model-multipliers.yml";
+const MODELS_CATALOG_URL = "https://models.github.ai/catalog/models";
+
+let cachedModels = null;
+let cacheTimestamp = 0;
+const CACHE_TTL = 3600000; // 1 hour
+
+function parseYamlMultipliers(yaml) {
+  const entries = [];
+  let current = null;
+  for (const line of yaml.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- name:")) {
+      if (current) entries.push(current);
+      current = { name: trimmed.replace("- name:", "").trim() };
+    } else if (current && trimmed.startsWith("multiplier_paid:")) {
+      const val = trimmed.replace("multiplier_paid:", "").trim();
+      current.multiplier_paid = val === "Not applicable" ? null : parseFloat(val);
+    } else if (current && trimmed.startsWith("multiplier_free:")) {
+      const val = trimmed.replace("multiplier_free:", "").trim();
+      current.multiplier_free = val === "Not applicable" ? null : parseFloat(val);
+    }
+  }
+  if (current) entries.push(current);
+  return entries;
+}
+
+function getTier(multiplier) {
+  if (multiplier === null) return "unavailable";
+  if (multiplier === 0) return "base";
+  if (multiplier < 1) return "low";
+  if (multiplier <= 1) return "standard";
+  if (multiplier <= 5) return "premium";
+  return "expensive";
+}
+
+async function fetchModels() {
+  if (cachedModels && Date.now() - cacheTimestamp < CACHE_TTL) {
+    return cachedModels;
+  }
+
+  try {
+    // Fetch the official multiplier table from GitHub docs
+    const multResp = await fetch(MULTIPLIERS_URL);
+    if (!multResp.ok) throw new Error(`Multipliers fetch failed: ${multResp.status}`);
+    const yamlText = await multResp.text();
+    const multipliers = parseYamlMultipliers(yamlText);
+
+    const models = {};
+    for (const m of multipliers) {
+      if (m.multiplier_paid === null) continue;
+
+      // Derive a model ID from the name
+      const id = m.name
+        .toLowerCase()
+        .replace(/[()]/g, "")
+        .replace(/\s+/g, "-")
+        .replace(/preview$/, "preview")
+        .trim();
+
+      let cost;
+      if (m.multiplier_paid === 0) {
+        cost = "Included";
+      } else if (m.multiplier_paid < 1) {
+        cost = `${m.multiplier_paid}× premium`;
+      } else {
+        cost = `${m.multiplier_paid}× premium`;
+      }
+
+      models[id] = {
+        name: m.name,
+        multiplier: m.multiplier_paid,
+        multiplier_free: m.multiplier_free,
+        cost,
+        tier: getTier(m.multiplier_paid),
+        overage: m.multiplier_paid === 0 ? "$0.00" : `$${(m.multiplier_paid * 0.04).toFixed(2)}`,
+      };
+    }
+
+    cachedModels = models;
+    cacheTimestamp = Date.now();
+    console.log(`📋 Loaded ${Object.keys(models).length} models from GitHub docs`);
+    return models;
+  } catch (err) {
+    console.error("⚠️  Failed to fetch models, using fallback:", err.message);
+    return cachedModels || {};
+  }
+}
 
 // The agent prompt from our policy-reviewer.agent.md, adapted for SDK use
 const POLICY_AGENT_PROMPT = `
@@ -196,9 +267,10 @@ async function runCopilotReview(prompt, modelId = "gpt-4.1") {
 
 // ---- API Routes ----
 
-// Available models list
-app.get("/api/models", (_req, res) => {
-  res.json(MODELS);
+// Available models list (fetched dynamically)
+app.get("/api/models", async (_req, res) => {
+  const models = await fetchModels();
+  res.json(models);
 });
 
 // Health check
@@ -211,8 +283,9 @@ app.post("/api/review/repo", async (req, res) => {
   const { repoUrl, branch, model } = req.body;
   if (!repoUrl) return res.status(400).json({ error: "repoUrl is required" });
 
-  const modelId = model && MODELS[model] ? model : "gpt-4.1";
-  const modelInfo = MODELS[modelId];
+  const models = await fetchModels();
+  const modelId = model && models[model] ? model : "gpt-4.1";
+  const modelInfo = models[modelId];
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pg-repo-"));
 
@@ -254,8 +327,9 @@ app.post("/api/review/upload", upload.single("archive"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pg-zip-"));
-  const modelId = req.body.model && MODELS[req.body.model] ? req.body.model : "gpt-4.1";
-  const modelInfo = MODELS[modelId];
+  const models = await fetchModels();
+  const modelId = req.body.model && models[req.body.model] ? req.body.model : "gpt-4.1";
+  const modelInfo = models[modelId];
 
   try {
     const projectName = req.body.projectName || path.parse(req.file.originalname).name;

@@ -249,11 +249,12 @@
       badge.className = "model-cost tier-" + m.tier;
       let left, right;
       if (m.multiplier === 0) {
-        left = "✅ " + m.note;
+        left = "✅ Unlimited on paid plans";
         right = "Free";
       } else {
-        left = m.cost + " per request · " + m.note;
-        right = "$" + (m.multiplier * 0.04).toFixed(2) + " overage each";
+        const freeNote = m.multiplier_free === 1 ? " · 1× on Free plan" : "";
+        left = m.cost + " per request" + freeNote;
+        right = m.overage + " overage each";
       }
       badge.innerHTML = '<span>' + left + '</span><span class="badge">' + right + '</span>';
     }
