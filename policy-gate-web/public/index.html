@@ -41,12 +41,25 @@
 
     .form-group { margin-bottom: 1.25rem; }
     label { display: block; margin-bottom: 0.4rem; font-weight: 500; font-size: 0.9rem; color: var(--text-muted); }
-    input[type="text"], input[type="url"] {
+    input[type="text"], input[type="url"], select {
       width: 100%; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border);
       border-radius: var(--radius); color: var(--text); font-size: 1rem; outline: none;
     }
-    input:focus { border-color: var(--accent); }
+    input:focus, select:focus { border-color: var(--accent); }
     input::placeholder { color: #484f58; }
+
+    select option { background: var(--surface); color: var(--text); }
+
+    .model-cost {
+      margin-top: 0.4rem; padding: 0.5rem 0.75rem; border-radius: var(--radius);
+      font-size: 0.82rem; display: flex; justify-content: space-between; align-items: center;
+    }
+    .model-cost.tier-base { background: rgba(63,185,80,0.1); color: var(--green); border: 1px solid rgba(63,185,80,0.2); }
+    .model-cost.tier-low { background: rgba(63,185,80,0.07); color: #7ee787; border: 1px solid rgba(63,185,80,0.15); }
+    .model-cost.tier-standard { background: rgba(210,153,34,0.1); color: var(--yellow); border: 1px solid rgba(210,153,34,0.2); }
+    .model-cost.tier-premium { background: rgba(248,81,73,0.1); color: var(--red); border: 1px solid rgba(248,81,73,0.2); }
+    .model-cost.tier-expensive { background: rgba(248,81,73,0.15); color: #ff7b72; border: 1px solid rgba(248,81,73,0.3); }
+    .model-cost .badge { font-weight: 700; }
 
     .file-drop {
       border: 2px dashed var(--border); border-radius: var(--radius); padding: 2.5rem 1rem;
@@ -140,6 +153,11 @@
         <label for="repo-branch">Branch (optional)</label>
         <input type="text" id="repo-branch" placeholder="main" />
       </div>
+      <div class="form-group">
+        <label for="repo-model">AI Model</label>
+        <select id="repo-model"></select>
+        <div class="model-cost" id="repo-model-cost"></div>
+      </div>
       <button class="btn" id="btn-review-repo">🔍 Run Policy Review</button>
     </div>
 
@@ -147,6 +165,11 @@
       <div class="form-group">
         <label for="project-name">Project Name</label>
         <input type="text" id="project-name" placeholder="my-data-pipeline" />
+      </div>
+      <div class="form-group">
+        <label for="upload-model">AI Model</label>
+        <select id="upload-model"></select>
+        <div class="model-cost" id="upload-model-cost"></div>
       </div>
       <div class="form-group">
         <div class="file-drop" id="file-drop">
@@ -215,6 +238,41 @@
       if (fileInput.files.length) { selectedFile = fileInput.files[0]; fileName.textContent = "✅ " + selectedFile.name; }
     });
 
+    // Model selector
+    let modelsData = {};
+
+    function updateCostBadge(selectId, costId) {
+      const sel = document.getElementById(selectId);
+      const badge = document.getElementById(costId);
+      const m = modelsData[sel.value];
+      if (!m) return;
+      badge.className = "model-cost tier-" + m.tier;
+      const mult = m.multiplier === 0 ? "Free — included in plan" : m.multiplier + "× premium request" + (m.multiplier !== 1 ? "s" : "") + " per use";
+      const price = m.multiplier === 0 ? "" : " (~$" + (m.multiplier * 0.04).toFixed(2) + " overage)";
+      badge.innerHTML = '<span>' + mult + '</span><span class="badge">' + m.cost + price + '</span>';
+    }
+
+    async function loadModels() {
+      try {
+        const resp = await fetch("/api/models");
+        modelsData = await resp.json();
+        ["repo-model", "upload-model"].forEach(selId => {
+          const sel = document.getElementById(selId);
+          const costId = selId + "-cost";
+          sel.innerHTML = "";
+          for (const [id, m] of Object.entries(modelsData)) {
+            const opt = document.createElement("option");
+            opt.value = id;
+            opt.textContent = m.name + "  —  " + m.cost;
+            sel.appendChild(opt);
+          }
+          sel.addEventListener("change", () => updateCostBadge(selId, costId));
+          updateCostBadge(selId, costId);
+        });
+      } catch (_) { /* models will use server default */ }
+    }
+    loadModels();
+
     const statusEl = document.getElementById("status");
     const statusText = document.getElementById("status-text");
     const reportContainer = document.getElementById("report-container");
@@ -271,14 +329,16 @@
     document.getElementById("btn-review-repo").addEventListener("click", async () => {
       const repoUrl = document.getElementById("repo-url").value.trim();
       const branch = document.getElementById("repo-branch").value.trim();
+      const model = document.getElementById("repo-model").value;
       if (!repoUrl) return alert("Please enter a repository URL");
       const btn = document.getElementById("btn-review-repo");
       btn.disabled = true;
-      showStatus("Cloning and analyzing " + repoUrl + " with Copilot agent…");
+      const mName = modelsData[model]?.name || model;
+      showStatus("Cloning and analyzing with " + mName + "…");
       try {
         const resp = await fetch("/api/review/repo", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repoUrl, branch: branch || undefined }),
+          body: JSON.stringify({ repoUrl, branch: branch || undefined, model }),
         });
         const data = await resp.json();
         hideStatus();
@@ -292,11 +352,14 @@
       const btn = document.getElementById("btn-review-upload");
       btn.disabled = true;
       const projectName = document.getElementById("project-name").value.trim() || selectedFile.name;
-      showStatus("Extracting and analyzing " + selectedFile.name + " with Copilot agent…");
+      const model = document.getElementById("upload-model").value;
+      const mName = modelsData[model]?.name || model;
+      showStatus("Extracting and analyzing with " + mName + "…");
       try {
         const form = new FormData();
         form.append("archive", selectedFile);
         form.append("projectName", projectName);
+        form.append("model", model);
         const resp = await fetch("/api/review/upload", { method: "POST", body: form });
         const data = await resp.json();
         hideStatus();

@@ -18,6 +18,19 @@ const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 50 * 1024 * 1024 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
+// Available models with premium request multipliers
+const MODELS = {
+  "gpt-4.1":           { name: "GPT-4.1",              multiplier: 0,     cost: "Included (0×)", tier: "base" },
+  "gpt-4o":            { name: "GPT-4o",                multiplier: 0,     cost: "Included (0×)", tier: "base" },
+  "o4-mini":           { name: "o4-mini",               multiplier: 0.33,  cost: "0.33× premium",  tier: "low" },
+  "gemini-2.0-flash":  { name: "Gemini 2.0 Flash",      multiplier: 0.25,  cost: "0.25× premium",  tier: "low" },
+  "claude-sonnet-4":   { name: "Claude Sonnet 4",       multiplier: 1,     cost: "1× premium",     tier: "standard" },
+  "claude-sonnet-4.5": { name: "Claude Sonnet 4.5",     multiplier: 1,     cost: "1× premium",     tier: "standard" },
+  "gemini-2.5-pro":    { name: "Gemini 2.5 Pro",        multiplier: 1,     cost: "1× premium",     tier: "standard" },
+  "claude-opus-4":     { name: "Claude Opus 4",         multiplier: 10,    cost: "10× premium",    tier: "premium" },
+  "gpt-4.5":           { name: "GPT-4.5",               multiplier: 50,    cost: "50× premium",    tier: "expensive" },
+};
+
 // The agent prompt from our policy-reviewer.agent.md, adapted for SDK use
 const POLICY_AGENT_PROMPT = `
 You are the Policy Reviewer Agent for a data engineering organization.
@@ -156,13 +169,13 @@ function buildPrompt(repoName, pyFiles) {
 /**
  * Run the Copilot SDK agent with the policy review prompt.
  */
-async function runCopilotReview(prompt) {
+async function runCopilotReview(prompt, modelId = "gpt-4.1") {
   const client = new CopilotClient();
   await client.start();
 
   try {
     const session = await client.createSession({
-      model: "gpt-4.1",
+      model: modelId,
       instructions: "You are a read-only code policy auditor. You NEVER modify files. You ONLY produce reports.",
       onPermissionRequest: () => ({ granted: true }),
     });
@@ -176,6 +189,11 @@ async function runCopilotReview(prompt) {
 
 // ---- API Routes ----
 
+// Available models list
+app.get("/api/models", (_req, res) => {
+  res.json(MODELS);
+});
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "policy-gate-web" });
@@ -183,8 +201,11 @@ app.get("/api/health", (_req, res) => {
 
 // Review via GitHub repo URL
 app.post("/api/review/repo", async (req, res) => {
-  const { repoUrl, branch } = req.body;
+  const { repoUrl, branch, model } = req.body;
   if (!repoUrl) return res.status(400).json({ error: "repoUrl is required" });
+
+  const modelId = model && MODELS[model] ? model : "gpt-4.1";
+  const modelInfo = MODELS[modelId];
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pg-repo-"));
 
@@ -210,9 +231,9 @@ app.post("/api/review/repo", async (req, res) => {
 
     // Build prompt and run Copilot agent
     const prompt = buildPrompt(repoName, pyFiles);
-    const report = await runCopilotReview(prompt);
+    const report = await runCopilotReview(prompt, modelId);
 
-    res.json({ report, filesScanned: pyFiles.length, repository: repoName });
+    res.json({ report, filesScanned: pyFiles.length, repository: repoName, model: modelId, modelInfo });
   } catch (err) {
     console.error("Review error:", err);
     res.status(500).json({ error: err.message || "Review failed" });
@@ -226,6 +247,8 @@ app.post("/api/review/upload", upload.single("archive"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pg-zip-"));
+  const modelId = req.body.model && MODELS[req.body.model] ? req.body.model : "gpt-4.1";
+  const modelInfo = MODELS[modelId];
 
   try {
     const projectName = req.body.projectName || path.parse(req.file.originalname).name;
@@ -245,9 +268,9 @@ app.post("/api/review/upload", upload.single("archive"), async (req, res) => {
 
     // Build prompt and run Copilot agent
     const prompt = buildPrompt(projectName, pyFiles);
-    const report = await runCopilotReview(prompt);
+    const report = await runCopilotReview(prompt, modelId);
 
-    res.json({ report, filesScanned: pyFiles.length, projectName });
+    res.json({ report, filesScanned: pyFiles.length, projectName, model: modelId, modelInfo });
   } catch (err) {
     console.error("Upload review error:", err);
     res.status(500).json({ error: err.message || "Review failed" });
