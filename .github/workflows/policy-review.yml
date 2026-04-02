@@ -1,0 +1,197 @@
+# -----------------------------------------------------------------------
+# Policy Gate — Reusable Agentic Workflow for Code Policy Review
+# -----------------------------------------------------------------------
+#
+# This workflow is designed to run as an ORG-LEVEL REQUIRED WORKFLOW
+# via GitHub Organization Rulesets. It does NOT need to be copied into
+# each repository — the org ruleset enforces it automatically.
+#
+# Setup (one-time, by an org admin):
+#   1. Go to Organization → Settings → Rulesets → New ruleset
+#   2. Target: All repositories (or a subset)
+#   3. Add rule: "Require workflows to pass"
+#   4. Select this workflow:
+#        .github/workflows/policy-review.yml @ main
+#        from the .github repository
+#   5. Enforcement: Active
+#
+# After setup, this workflow runs on every PR in every targeted repo
+# in the org — with zero per-repo configuration needed.
+#
+# ⚠️ READ-ONLY: This workflow never modifies repository code.
+#    It only posts a report as a PR comment and sets a check status.
+# -----------------------------------------------------------------------
+
+name: "📋 Policy Gate Review"
+
+on:
+  # Reusable workflow — called by org rulesets or by other workflows
+  workflow_call:
+
+  # Also runs directly on PRs in this (.github) repo
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "**.py"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  policy-review:
+    name: "📋 Policy Review"
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---- 1. Check out the PR's code ------------------------------------
+      - name: "Checkout PR code"
+        uses: actions/checkout@v4
+
+      # ---- 2. Get the policy checker script ------------------------------
+      # When running via org ruleset on another repo, we need to fetch
+      # the checker script from this (.github) repository.
+      - name: "Fetch policy checker"
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/.github
+          ref: main
+          path: .policy-gate
+          sparse-checkout: |
+            scripts/policy_checker.py
+
+      # ---- 3. Set up Python ----------------------------------------------
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ---- 4. Run the policy checker (READ-ONLY) -------------------------
+      - name: "Run policy check"
+        id: check
+        run: |
+          echo "🔍 Scanning Python files for policy violations..."
+          echo ""
+
+          # Generate markdown report
+          python .policy-gate/scripts/policy_checker.py . \
+            --repo "${{ github.repository }}" \
+            --branch "${{ github.head_ref || github.ref_name }}" \
+            --format markdown \
+            --output policy-report.md
+
+          # Generate JSON for status evaluation
+          python .policy-gate/scripts/policy_checker.py . \
+            --repo "${{ github.repository }}" \
+            --branch "${{ github.head_ref || github.ref_name }}" \
+            --format json \
+            --output policy-report.json
+
+          # Extract overall status
+          STATUS=$(python3 -c "
+          import json, sys
+          with open('policy-report.json') as f:
+              data = json.load(f)
+          print(data['overall_status'])
+          ")
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+          ERRORS=$(python3 -c "
+          import json
+          with open('policy-report.json') as f:
+              data = json.load(f)
+          print(data['total_errors'])
+          ")
+          echo "errors=$ERRORS" >> "$GITHUB_OUTPUT"
+
+          WARNINGS=$(python3 -c "
+          import json
+          with open('policy-report.json') as f:
+              data = json.load(f)
+          print(data['total_warnings'])
+          ")
+          echo "warnings=$WARNINGS" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "📋 Policy check complete: status=$STATUS, errors=$ERRORS, warnings=$WARNINGS"
+
+      # ---- 5. Post report as PR comment ----------------------------------
+      - name: "Post policy report"
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_call'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('policy-report.md', 'utf8');
+
+            // Determine the PR number
+            const prNumber = context.issue?.number || context.payload?.pull_request?.number;
+            if (!prNumber) {
+              console.log('No PR number found — skipping comment.');
+              return;
+            }
+
+            // Look for an existing Policy Gate comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const marker = '📋 Policy Review Report';
+            const existing = comments.find(c =>
+              c.body && c.body.includes(marker) && c.user.type === 'Bot'
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: report,
+              });
+              console.log(`✅ Updated existing report comment #${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: report,
+              });
+              console.log('✅ Posted new policy report comment');
+            }
+
+      # ---- 6. Set final check status ------------------------------------
+      - name: "Evaluate result"
+        if: always()
+        run: |
+          STATUS="${{ steps.check.outputs.status }}"
+          ERRORS="${{ steps.check.outputs.errors }}"
+          WARNINGS="${{ steps.check.outputs.warnings }}"
+
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "  📋 POLICY GATE RESULT"
+          echo "════════════════════════════════════════════"
+
+          if [ "$STATUS" = "fail" ]; then
+            echo "  ❌ FAIL — $ERRORS error(s), $WARNINGS warning(s)"
+            echo ""
+            echo "  Review the Policy Review Report comment"
+            echo "  on this PR for details."
+            echo "════════════════════════════════════════════"
+            echo ""
+            echo "::error::Policy Gate FAILED with $ERRORS error(s). See the Policy Review Report on this PR."
+            exit 1
+          elif [ "$STATUS" = "warning" ]; then
+            echo "  ⚠️  WARNINGS — $WARNINGS warning(s)"
+            echo ""
+            echo "  Review the Policy Review Report comment"
+            echo "  on this PR for details."
+            echo "════════════════════════════════════════════"
+            echo ""
+            echo "::warning::Policy Gate found $WARNINGS warning(s). See the Policy Review Report on this PR."
+          else
+            echo "  ✅ PASS — All policies satisfied"
+            echo "════════════════════════════════════════════"
+          fi
