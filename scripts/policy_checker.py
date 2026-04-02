@@ -95,7 +95,10 @@ class PolicyChecker:
         """Find all Python files, skipping irrelevant directories."""
         self.python_files = sorted(
             p for p in self.target_dir.rglob("*.py")
-            if not any(part in self.SKIP_DIRS for part in p.parts)
+            if not any(
+                part in self.SKIP_DIRS
+                for part in p.relative_to(self.target_dir).parts
+            )
         )
 
     # -- run all checks ------------------------------------------------------
