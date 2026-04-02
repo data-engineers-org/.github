@@ -131,12 +131,22 @@ jobs:
             echo "⚠️ No Python files found — generating empty report"
           fi
 
-          # Generate markdown report
+          # Generate markdown report (to file and stdout for console log)
           python3 .policy-gate/scripts/policy_checker.py target-repo \
             --repo "$REPO_FULL" \
             --branch "$BRANCH" \
             --format markdown \
             --output policy-report.md
+
+          echo ""
+          echo "════════════════════════════════════════════════════════════════"
+          echo "                    📋 POLICY REVIEW REPORT"
+          echo "════════════════════════════════════════════════════════════════"
+          echo ""
+          cat policy-report.md
+          echo ""
+          echo "════════════════════════════════════════════════════════════════"
+          echo ""
 
           # Generate JSON for status evaluation
           python3 .policy-gate/scripts/policy_checker.py target-repo \
@@ -198,18 +208,7 @@ jobs:
           echo "| **Workflow Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-      # ---- 7. Upload report as artifact ----------------------------------
-      - name: "Upload report artifact"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: "policy-report-${{ github.run_number }}"
-          path: |
-            policy-report.md
-            policy-report.json
-          retention-days: 90
-
-      # ---- 8. Set final status -------------------------------------------
+      # ---- 7. Set final status -------------------------------------------
       - name: "Evaluate result"
         if: always()
         run: |
