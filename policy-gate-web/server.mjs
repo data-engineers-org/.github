@@ -164,6 +164,7 @@ async function runCopilotReview(prompt) {
     const session = await client.createSession({
       model: "gpt-4.1",
       instructions: "You are a read-only code policy auditor. You NEVER modify files. You ONLY produce reports.",
+      onPermissionRequest: () => ({ granted: true }),
     });
 
     const response = await session.sendAndWait({ prompt });
