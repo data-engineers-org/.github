@@ -54,12 +54,8 @@
       margin-top: 0.4rem; padding: 0.5rem 0.75rem; border-radius: var(--radius);
       font-size: 0.82rem; display: flex; justify-content: space-between; align-items: center;
     }
-    .model-cost.tier-base { background: rgba(63,185,80,0.1); color: var(--green); border: 1px solid rgba(63,185,80,0.2); }
-    .model-cost.tier-low { background: rgba(63,185,80,0.07); color: #7ee787; border: 1px solid rgba(63,185,80,0.15); }
-    .model-cost.tier-standard { background: rgba(210,153,34,0.1); color: var(--yellow); border: 1px solid rgba(210,153,34,0.2); }
-    .model-cost.tier-premium { background: rgba(248,81,73,0.1); color: var(--red); border: 1px solid rgba(248,81,73,0.2); }
-    .model-cost.tier-expensive { background: rgba(248,81,73,0.15); color: #ff7b72; border: 1px solid rgba(248,81,73,0.3); }
-    .model-cost .badge { font-weight: 700; }
+    .model-cost { background: rgba(88,166,255,0.06); color: var(--text-muted); border: 1px solid rgba(88,166,255,0.12); }
+    .model-cost .badge { font-weight: 600; color: var(--text-muted); }
 
     .file-drop {
       border: 2px dashed var(--border); border-radius: var(--radius); padding: 2.5rem 1rem;
@@ -246,15 +242,14 @@
       const badge = document.getElementById(costId);
       const m = modelsData[sel.value];
       if (!m) return;
-      badge.className = "model-cost tier-" + m.tier;
+      badge.className = "model-cost";
       let left, right;
       if (m.multiplier === 0) {
-        left = "✅ Unlimited on paid plans";
-        right = "Free";
+        left = "Included with paid plans";
+        right = "No premium requests used";
       } else {
-        const freeNote = m.multiplier_free === 1 ? " · 1× on Free plan" : "";
-        left = m.cost + " per request" + freeNote;
-        right = m.overage + " overage each";
+        left = m.multiplier + "× premium request" + (m.multiplier !== 1 ? "s" : "") + " per use";
+        right = m.multiplier_free === 1 ? "1× on Free plan" : "";
       }
       badge.innerHTML = '<span>' + left + '</span><span class="badge">' + right + '</span>';
     }
@@ -270,7 +265,8 @@
           for (const [id, m] of Object.entries(modelsData)) {
             const opt = document.createElement("option");
             opt.value = id;
-            opt.textContent = m.name + "  —  " + m.cost;
+            const label = m.multiplier === 0 ? "Included" : m.multiplier + "× premium";
+            opt.textContent = m.name + "    ·    " + label;
             sel.appendChild(opt);
           }
           sel.addEventListener("change", () => updateCostBadge(selId, costId));
